@@ -1,23 +1,28 @@
 import { create } from 'zustand';
+import { PlaybackState } from '../native/AudioPlayerNative';
 
 interface AppState {
-  // Placeholder state properties for future audio playback & playlist logic
   currentTrackId: string | null;
-  isPlaying: boolean;
-  volume: number;
+  currentTrackUrl: string | null;
+  playbackState: PlaybackState;
+  positionMs: number;
+  durationMs: number;
 
-  // Actions
-  setCurrentTrackId: (id: string | null) => void;
-  setIsPlaying: (playing: boolean) => void;
-  setVolume: (volume: number) => void;
+  setCurrentTrackUrl: (url: string | null) => void;
+  setPlaybackState: (state: PlaybackState) => void;
+  setPositionMs: (positionMs: number) => void;
+  setDurationMs: (durationMs: number) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
   currentTrackId: null,
-  isPlaying: false,
-  volume: 1.0,
+  currentTrackUrl: null,
+  playbackState: 'idle',
+  positionMs: 0,
+  durationMs: 0,
 
-  setCurrentTrackId: (id) => set({ currentTrackId: id }),
-  setIsPlaying: (playing) => set({ isPlaying: playing }),
-  setVolume: (volume) => set({ volume: volume }),
+  setCurrentTrackUrl: (url) => set({ currentTrackUrl: url }),
+  setPlaybackState: (state) => set({ playbackState: state }),
+  setPositionMs: (positionMs) => set({ positionMs }),
+  setDurationMs: (durationMs) => set({ durationMs }),
 }));
