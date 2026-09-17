@@ -1,12 +1,21 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  TouchableOpacity,
+  ActivityIndicator,
+} from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { theme } from '../constants/theme';
 import { Header } from '../components/Header';
 import { useAppStore } from '../store/useAppStore';
 import { AudioPlayerService } from '../services/AudioPlayerService';
+import { YouTubeExtractorService } from '../services/YouTubeExtractorService';
 
 const SAMPLE_AUDIO_URL = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+const SAMPLE_YOUTUBE_VIDEO_ID = 'dQw4w9WgXcQ'; // Rick Astley - Never Gonna Give You Up (Standard on-demand audio track)
 
 function formatTime(ms: number): string {
   if (!ms || isNaN(ms) || ms < 0) return '0:00';
@@ -27,6 +36,8 @@ export const PlayerScreen: React.FC = () => {
   } = useAppStore();
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isResolvingYouTube, setIsResolvingYouTube] = useState<boolean>(false);
+  const [currentSourceLabel, setCurrentSourceLabel] = useState<string>('No track selected');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -73,6 +84,28 @@ export const PlayerScreen: React.FC = () => {
     };
   }, [playbackState, setPositionMs, setDurationMs]);
 
+  const handlePlaySoundHelix = () => {
+    setErrorMessage(null);
+    setCurrentSourceLabel('SoundHelix Direct Stream');
+    AudioPlayerService.play(SAMPLE_AUDIO_URL);
+  };
+
+  const handleExtractAndPlayYouTube = async () => {
+    setErrorMessage(null);
+    setIsResolvingYouTube(true);
+    setCurrentSourceLabel(`YouTube ID: ${SAMPLE_YOUTUBE_VIDEO_ID}`);
+
+    try {
+      const streamUrl = await YouTubeExtractorService.resolveStreamUrl(SAMPLE_YOUTUBE_VIDEO_ID);
+      setIsResolvingYouTube(false);
+      AudioPlayerService.play(streamUrl);
+    } catch (err: any) {
+      setIsResolvingYouTube(false);
+      const errMsg = err?.message || 'Failed to extract YouTube audio stream';
+      setErrorMessage(errMsg);
+    }
+  };
+
   const handlePlayPause = () => {
     setErrorMessage(null);
     if (playbackState === 'playing') {
@@ -80,7 +113,7 @@ export const PlayerScreen: React.FC = () => {
     } else if (playbackState === 'paused') {
       AudioPlayerService.resume();
     } else {
-      AudioPlayerService.play(SAMPLE_AUDIO_URL);
+      handlePlaySoundHelix();
     }
   };
 
@@ -106,12 +139,12 @@ export const PlayerScreen: React.FC = () => {
         <Header title="Now Playing" subtitle="Sonance Audio Player" />
         <View style={styles.playerContent}>
           <View style={styles.artworkPlaceholder}>
-            <Ionicons name="musical-notes" size={80} color={theme.colors.primary} />
-            <Text style={styles.artworkLabel}>SoundHelix Song 1</Text>
+            <Ionicons name="logo-youtube" size={70} color={theme.colors.primary} />
+            <Text style={styles.artworkLabel}>{currentSourceLabel}</Text>
           </View>
 
-          <Text style={styles.trackTitle}>SoundHelix Sample Track</Text>
-          <Text style={styles.artistName}>Public Domain Demo Stream</Text>
+          <Text style={styles.trackTitle}>Sonance Track Demo</Text>
+          <Text style={styles.artistName}>Direct MP3 & YouTube Extractor</Text>
 
           <View style={styles.stateBadge}>
             <Text style={styles.stateBadgeText}>
@@ -119,8 +152,34 @@ export const PlayerScreen: React.FC = () => {
             </Text>
           </View>
 
+          {/* Source Selectors */}
+          <View style={styles.sourceButtonsRow}>
+            <TouchableOpacity
+              style={styles.sourceButton}
+              onPress={handlePlaySoundHelix}
+              disabled={isResolvingYouTube}
+            >
+              <Text style={styles.sourceButtonText}>Play Direct MP3</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.sourceButton, styles.youtubeButton]}
+              onPress={handleExtractAndPlayYouTube}
+              disabled={isResolvingYouTube}
+            >
+              {isResolvingYouTube ? (
+                <ActivityIndicator color={theme.colors.background} size="small" />
+              ) : (
+                <Text style={styles.youtubeButtonText}>Extract & Play YouTube</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
           {errorMessage && (
-            <Text style={styles.errorText}>Error: {errorMessage}</Text>
+            <View style={styles.errorBanner}>
+              <Ionicons name="alert-circle" size={18} color="#FF4D4D" style={{ marginRight: 6 }} />
+              <Text style={styles.errorText}>{errorMessage}</Text>
+            </View>
           )}
 
           {/* Progress bar info */}
@@ -130,9 +189,10 @@ export const PlayerScreen: React.FC = () => {
                 style={[
                   styles.progressBarFill,
                   {
-                    width: durationMs > 0
-                      ? `${Math.min(100, (positionMs / durationMs) * 100)}%`
-                      : '0%',
+                    width:
+                      durationMs > 0
+                        ? `${Math.min(100, (positionMs / durationMs) * 100)}%`
+                        : '0%',
                   },
                 ]}
               />
@@ -149,7 +209,11 @@ export const PlayerScreen: React.FC = () => {
               <Ionicons name="play-back" size={32} color={theme.colors.textPrimary} />
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={handlePlayPause} style={styles.playButton} activeOpacity={0.8}>
+            <TouchableOpacity
+              onPress={handlePlayPause}
+              style={styles.playButton}
+              activeOpacity={0.8}
+            >
               <Ionicons
                 name={
                   playbackState === 'playing'
@@ -194,53 +258,95 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing.md,
   },
   artworkPlaceholder: {
-    width: 220,
-    height: 220,
+    width: 200,
+    height: 200,
     borderRadius: 16,
     backgroundColor: theme.colors.surface,
     borderWidth: 1,
     borderColor: theme.colors.border,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    padding: theme.spacing.xs,
   },
   artworkLabel: {
     color: theme.colors.textSecondary,
     fontSize: 12,
     marginTop: theme.spacing.xs,
+    textAlign: 'center',
   },
   trackTitle: {
     color: theme.colors.textPrimary,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   artistName: {
     color: theme.colors.textSecondary,
-    fontSize: 14,
-    marginBottom: theme.spacing.sm,
+    fontSize: 13,
+    marginBottom: theme.spacing.xs,
   },
   stateBadge: {
     backgroundColor: theme.colors.surfaceHighlight,
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
-    marginBottom: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
   },
   stateBadgeText: {
     color: theme.colors.primary,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
     letterSpacing: 1,
+  },
+  sourceButtonsRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.sm,
+  },
+  sourceButton: {
+    backgroundColor: theme.colors.surface,
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.sm,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  sourceButtonText: {
+    color: theme.colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  youtubeButton: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+    minWidth: 160,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  youtubeButtonText: {
+    color: theme.colors.background,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3A1414',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.xs,
+    borderRadius: 8,
+    marginVertical: theme.spacing.xs,
+    maxWidth: '90%',
   },
   errorText: {
     color: '#FF4D4D',
     fontSize: 12,
-    marginBottom: theme.spacing.xs,
+    flexShrink: 1,
   },
   progressContainer: {
     width: '90%',
-    marginVertical: theme.spacing.sm,
+    marginVertical: theme.spacing.xs,
   },
   progressBarBackground: {
     height: 6,
@@ -255,7 +361,7 @@ const styles = StyleSheet.create({
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 6,
+    marginTop: 4,
   },
   timeText: {
     color: theme.colors.textSecondary,
@@ -266,16 +372,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-evenly',
     width: '90%',
-    marginTop: theme.spacing.md,
+    marginTop: theme.spacing.sm,
   },
   iconButton: {
     padding: theme.spacing.sm,
   },
   playButton: {
     backgroundColor: theme.colors.primary,
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     justifyContent: 'center',
     alignItems: 'center',
   },

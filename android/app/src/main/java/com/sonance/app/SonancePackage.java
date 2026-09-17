@@ -15,6 +15,7 @@ public class SonancePackage implements ReactPackage {
     public List<NativeModule> createNativeModules(ReactApplicationContext reactContext) {
         List<NativeModule> modules = new ArrayList<>();
         modules.add(new AudioPlayerModule(reactContext));
+        modules.add(new YouTubeExtractorModule(reactContext));
         return modules;
     }
 
