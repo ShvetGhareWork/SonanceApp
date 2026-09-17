@@ -6,22 +6,35 @@ import {
   SafeAreaView,
   TouchableOpacity,
   ActivityIndicator,
+  TextInput,
+  FlatList,
+  Image,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { theme } from '../constants/theme';
 import { Header } from '../components/Header';
 import { useAppStore } from '../store/useAppStore';
 import { AudioPlayerService } from '../services/AudioPlayerService';
-import { YouTubeExtractorService } from '../services/YouTubeExtractorService';
+import {
+  YouTubeExtractorService,
+  PlaylistTrack,
+} from '../services/YouTubeExtractorService';
 
 const SAMPLE_AUDIO_URL = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
-const SAMPLE_YOUTUBE_VIDEO_ID = 'dQw4w9WgXcQ'; // Rick Astley - Never Gonna Give You Up (Standard on-demand audio track)
+const SAMPLE_PLAYLIST_URL = 'https://www.youtube.com/playlist?list=PL4fGSI1pDJn6jXS_OtUyaL12Q14O2L18R';
 
 function formatTime(ms: number): string {
   if (!ms || isNaN(ms) || ms < 0) return '0:00';
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+}
+
+function formatDurationSeconds(sec: number): string {
+  if (!sec || isNaN(sec) || sec < 0) return '0:00';
+  const minutes = Math.floor(sec / 60);
+  const seconds = Math.floor(sec % 60);
   return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
 
@@ -36,8 +49,12 @@ export const PlayerScreen: React.FC = () => {
   } = useAppStore();
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isResolvingYouTube, setIsResolvingYouTube] = useState<boolean>(false);
-  const [currentSourceLabel, setCurrentSourceLabel] = useState<string>('No track selected');
+  const [playlistInputUrl, setPlaylistInputUrl] = useState<string>(SAMPLE_PLAYLIST_URL);
+  const [isFetchingPlaylist, setIsFetchingPlaylist] = useState<boolean>(false);
+  const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>([]);
+  const [selectedTrack, setSelectedTrack] = useState<PlaylistTrack | null>(null);
+  const [loadingTrackId, setLoadingTrackId] = useState<string | null>(null);
+
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -51,6 +68,7 @@ export const PlayerScreen: React.FC = () => {
     const errorSub = AudioPlayerService.onPlaybackError((err) => {
       setErrorMessage(err);
       setPlaybackState('idle');
+      setLoadingTrackId(null);
     });
 
     return () => {
@@ -84,26 +102,48 @@ export const PlayerScreen: React.FC = () => {
     };
   }, [playbackState, setPositionMs, setDurationMs]);
 
-  const handlePlaySoundHelix = () => {
+  const handleFetchPlaylist = async () => {
     setErrorMessage(null);
-    setCurrentSourceLabel('SoundHelix Direct Stream');
-    AudioPlayerService.play(SAMPLE_AUDIO_URL);
-  };
-
-  const handleExtractAndPlayYouTube = async () => {
-    setErrorMessage(null);
-    setIsResolvingYouTube(true);
-    setCurrentSourceLabel(`YouTube ID: ${SAMPLE_YOUTUBE_VIDEO_ID}`);
+    setIsFetchingPlaylist(true);
 
     try {
-      const streamUrl = await YouTubeExtractorService.resolveStreamUrl(SAMPLE_YOUTUBE_VIDEO_ID);
-      setIsResolvingYouTube(false);
-      AudioPlayerService.play(streamUrl);
+      const tracks = await YouTubeExtractorService.getPlaylistTracks(playlistInputUrl);
+      setIsFetchingPlaylist(false);
+      setPlaylistTracks(tracks);
+      console.log(`[PlayerScreen] Fetched ${tracks.length} tracks:`, tracks);
     } catch (err: any) {
-      setIsResolvingYouTube(false);
-      const errMsg = err?.message || 'Failed to extract YouTube audio stream';
+      setIsFetchingPlaylist(false);
+      const errMsg = err?.message || 'Failed to fetch playlist tracks';
       setErrorMessage(errMsg);
     }
+  };
+
+  const handlePlayTrack = async (track: PlaylistTrack) => {
+    setErrorMessage(null);
+    setSelectedTrack(track);
+    setLoadingTrackId(track.id);
+
+    try {
+      const streamUrl = await YouTubeExtractorService.resolveStreamUrl(track.id);
+      setLoadingTrackId(null);
+      AudioPlayerService.play(streamUrl);
+    } catch (err: any) {
+      setLoadingTrackId(null);
+      const errMsg = err?.message || `Failed to resolve stream for ${track.title}`;
+      setErrorMessage(errMsg);
+    }
+  };
+
+  const handlePlaySoundHelix = () => {
+    setErrorMessage(null);
+    setSelectedTrack({
+      id: 'soundhelix-1',
+      title: 'SoundHelix Song 1',
+      artist: 'SoundHelix Direct MP3',
+      thumbnailUrl: '',
+      duration: 372,
+    });
+    AudioPlayerService.play(SAMPLE_AUDIO_URL);
   };
 
   const handlePlayPause = () => {
@@ -137,14 +177,15 @@ export const PlayerScreen: React.FC = () => {
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Header title="Now Playing" subtitle="Sonance Audio Player" />
-        <View style={styles.playerContent}>
-          <View style={styles.artworkPlaceholder}>
-            <Ionicons name="logo-youtube" size={70} color={theme.colors.primary} />
-            <Text style={styles.artworkLabel}>{currentSourceLabel}</Text>
-          </View>
 
-          <Text style={styles.trackTitle}>Sonance Track Demo</Text>
-          <Text style={styles.artistName}>Direct MP3 & YouTube Extractor</Text>
+        {/* Top Player Card */}
+        <View style={styles.nowPlayingCard}>
+          <Text style={styles.trackTitle}>
+            {selectedTrack ? selectedTrack.title : 'No Track Playing'}
+          </Text>
+          <Text style={styles.artistName}>
+            {selectedTrack ? selectedTrack.artist : 'Select a track below'}
+          </Text>
 
           <View style={styles.stateBadge}>
             <Text style={styles.stateBadgeText}>
@@ -152,37 +193,7 @@ export const PlayerScreen: React.FC = () => {
             </Text>
           </View>
 
-          {/* Source Selectors */}
-          <View style={styles.sourceButtonsRow}>
-            <TouchableOpacity
-              style={styles.sourceButton}
-              onPress={handlePlaySoundHelix}
-              disabled={isResolvingYouTube}
-            >
-              <Text style={styles.sourceButtonText}>Play Direct MP3</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.sourceButton, styles.youtubeButton]}
-              onPress={handleExtractAndPlayYouTube}
-              disabled={isResolvingYouTube}
-            >
-              {isResolvingYouTube ? (
-                <ActivityIndicator color={theme.colors.background} size="small" />
-              ) : (
-                <Text style={styles.youtubeButtonText}>Extract & Play YouTube</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-
-          {errorMessage && (
-            <View style={styles.errorBanner}>
-              <Ionicons name="alert-circle" size={18} color="#FF4D4D" style={{ marginRight: 6 }} />
-              <Text style={styles.errorText}>{errorMessage}</Text>
-            </View>
-          )}
-
-          {/* Progress bar info */}
+          {/* Progress Bar */}
           <View style={styles.progressContainer}>
             <View style={styles.progressBarBackground}>
               <View
@@ -203,10 +214,10 @@ export const PlayerScreen: React.FC = () => {
             </View>
           </View>
 
-          {/* Controls */}
+          {/* Playback Controls */}
           <View style={styles.controlsRow}>
             <TouchableOpacity onPress={handleSeekBackward} style={styles.iconButton}>
-              <Ionicons name="play-back" size={32} color={theme.colors.textPrimary} />
+              <Ionicons name="play-back" size={24} color={theme.colors.textPrimary} />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -222,19 +233,102 @@ export const PlayerScreen: React.FC = () => {
                     ? 'hourglass-outline'
                     : 'play'
                 }
-                size={36}
+                size={28}
                 color={theme.colors.background}
               />
             </TouchableOpacity>
 
             <TouchableOpacity onPress={handleStop} style={styles.iconButton}>
-              <Ionicons name="square" size={28} color={theme.colors.textPrimary} />
+              <Ionicons name="square" size={22} color={theme.colors.textPrimary} />
             </TouchableOpacity>
 
             <TouchableOpacity onPress={handleSeekForward} style={styles.iconButton}>
-              <Ionicons name="play-forward" size={32} color={theme.colors.textPrimary} />
+              <Ionicons name="play-forward" size={24} color={theme.colors.textPrimary} />
             </TouchableOpacity>
           </View>
+        </View>
+
+        {errorMessage && (
+          <View style={styles.errorBanner}>
+            <Ionicons name="alert-circle" size={16} color="#FF4D4D" style={{ marginRight: 6 }} />
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        )}
+
+        {/* Playlist Input Section */}
+        <View style={styles.playlistInputSection}>
+          <Text style={styles.sectionTitle}>YouTube Playlist Extractor</Text>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={styles.urlInput}
+              value={playlistInputUrl}
+              onChangeText={setPlaylistInputUrl}
+              placeholder="Paste YouTube Playlist URL"
+              placeholderTextColor={theme.colors.textSecondary}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={styles.fetchButton}
+              onPress={handleFetchPlaylist}
+              disabled={isFetchingPlaylist}
+            >
+              {isFetchingPlaylist ? (
+                <ActivityIndicator color={theme.colors.background} size="small" />
+              ) : (
+                <Text style={styles.fetchButtonText}>Fetch</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.fallbackButton}
+            onPress={handlePlaySoundHelix}
+          >
+            <Text style={styles.fallbackButtonText}>Play Fallback MP3 Stream</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Playlist Track List */}
+        <View style={styles.listContainer}>
+          <Text style={styles.listHeader}>
+            Playlist Tracks ({playlistTracks.length})
+          </Text>
+          <FlatList
+            data={playlistTracks}
+            keyExtractor={(item, index) => `${item.id}-${index}`}
+            contentContainerStyle={styles.listContent}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={styles.trackCard}
+                onPress={() => handlePlayTrack(item)}
+                activeOpacity={0.7}
+              >
+                {item.thumbnailUrl ? (
+                  <Image source={{ uri: item.thumbnailUrl }} style={styles.trackThumbnail} />
+                ) : (
+                  <View style={[styles.trackThumbnail, styles.thumbnailPlaceholder]}>
+                    <Ionicons name="musical-note" size={20} color={theme.colors.primary} />
+                  </View>
+                )}
+
+                <View style={styles.trackInfo}>
+                  <Text style={styles.trackCardTitle} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.trackCardArtist} numberOfLines={1}>
+                    {item.artist} • {formatDurationSeconds(item.duration)}
+                  </Text>
+                </View>
+
+                {loadingTrackId === item.id ? (
+                  <ActivityIndicator color={theme.colors.primary} size="small" />
+                ) : (
+                  <Ionicons name="play-circle-outline" size={26} color={theme.colors.primary} />
+                )}
+              </TouchableOpacity>
+            )}
+          />
         </View>
       </View>
     </SafeAreaView>
@@ -251,107 +345,47 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
     paddingHorizontal: theme.spacing.md,
   },
-  playerContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: theme.spacing.md,
-  },
-  artworkPlaceholder: {
-    width: 200,
-    height: 200,
-    borderRadius: 16,
+  nowPlayingCard: {
     backgroundColor: theme.colors.surface,
+    padding: theme.spacing.md,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: theme.spacing.sm,
-    padding: theme.spacing.xs,
-  },
-  artworkLabel: {
-    color: theme.colors.textSecondary,
-    fontSize: 12,
-    marginTop: theme.spacing.xs,
-    textAlign: 'center',
   },
   trackTitle: {
     color: theme.colors.textPrimary,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
+    textAlign: 'center',
     marginBottom: 2,
   },
   artistName: {
     color: theme.colors.textSecondary,
-    fontSize: 13,
+    fontSize: 12,
     marginBottom: theme.spacing.xs,
   },
   stateBadge: {
     backgroundColor: theme.colors.surfaceHighlight,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginBottom: theme.spacing.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginBottom: theme.spacing.xs,
   },
   stateBadgeText: {
     color: theme.colors.primary,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 'bold',
     letterSpacing: 1,
   },
-  sourceButtonsRow: {
-    flexDirection: 'row',
-    gap: theme.spacing.sm,
-    marginBottom: theme.spacing.sm,
-  },
-  sourceButton: {
-    backgroundColor: theme.colors.surface,
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  sourceButtonText: {
-    color: theme.colors.textPrimary,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  youtubeButton: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-    minWidth: 160,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  youtubeButtonText: {
-    color: theme.colors.background,
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#3A1414',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
-    borderRadius: 8,
-    marginVertical: theme.spacing.xs,
-    maxWidth: '90%',
-  },
-  errorText: {
-    color: '#FF4D4D',
-    fontSize: 12,
-    flexShrink: 1,
-  },
   progressContainer: {
-    width: '90%',
+    width: '100%',
     marginVertical: theme.spacing.xs,
   },
   progressBarBackground: {
-    height: 6,
+    height: 4,
     backgroundColor: theme.colors.surfaceHighlight,
-    borderRadius: 3,
+    borderRadius: 2,
     overflow: 'hidden',
   },
   progressBarFill: {
@@ -361,28 +395,140 @@ const styles = StyleSheet.create({
   timeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 4,
+    marginTop: 2,
   },
   timeText: {
     color: theme.colors.textSecondary,
-    fontSize: 12,
+    fontSize: 10,
   },
   controlsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-evenly',
-    width: '90%',
-    marginTop: theme.spacing.sm,
+    justifyContent: 'space-around',
+    width: '80%',
+    marginTop: theme.spacing.xs,
   },
   iconButton: {
-    padding: theme.spacing.sm,
+    padding: theme.spacing.xs,
   },
   playButton: {
     backgroundColor: theme.colors.primary,
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  errorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#3A1414',
+    paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.xs,
+    borderRadius: 8,
+    marginVertical: theme.spacing.xs,
+  },
+  errorText: {
+    color: '#FF4D4D',
+    fontSize: 12,
+    flexShrink: 1,
+  },
+  playlistInputSection: {
+    marginTop: theme.spacing.sm,
+    backgroundColor: theme.colors.surface,
+    padding: theme.spacing.sm,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  sectionTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginBottom: theme.spacing.xs,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.xs,
+  },
+  urlInput: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+    color: theme.colors.textPrimary,
+    borderRadius: 6,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 6,
+    fontSize: 11,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  fetchButton: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: 6,
+    paddingHorizontal: theme.spacing.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fetchButtonText: {
+    color: theme.colors.background,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  fallbackButton: {
+    marginTop: theme.spacing.xs,
+    alignItems: 'center',
+  },
+  fallbackButtonText: {
+    color: theme.colors.textSecondary,
+    fontSize: 11,
+    textDecorationLine: 'underline',
+  },
+  listContainer: {
+    flex: 1,
+    marginTop: theme.spacing.sm,
+  },
+  listHeader: {
+    color: theme.colors.textPrimary,
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginBottom: theme.spacing.xs,
+  },
+  listContent: {
+    gap: theme.spacing.xs,
+    paddingBottom: theme.spacing.xl,
+  },
+  trackCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+    padding: theme.spacing.xs,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  trackThumbnail: {
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+  },
+  thumbnailPlaceholder: {
+    backgroundColor: theme.colors.surfaceHighlight,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  trackInfo: {
+    flex: 1,
+    marginLeft: theme.spacing.sm,
+    marginRight: theme.spacing.xs,
+  },
+  trackCardTitle: {
+    color: theme.colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  trackCardArtist: {
+    color: theme.colors.textSecondary,
+    fontSize: 10,
+    marginTop: 2,
   },
 });
