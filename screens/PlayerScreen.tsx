@@ -13,12 +13,13 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { theme } from '../constants/theme';
 import { Header } from '../components/Header';
-import { useAppStore } from '../store/useAppStore';
-import { AudioPlayerService } from '../services/AudioPlayerService';
+import { usePlayerStore } from '../store/playerStore';
+import { PlaybackController } from '../services/PlaybackController';
 import {
   YouTubeExtractorService,
   PlaylistTrack,
 } from '../services/YouTubeExtractorService';
+import { AudioPlayerService } from '../services/AudioPlayerService';
 
 const SAMPLE_AUDIO_URL = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
 const SAMPLE_PLAYLIST_URL = 'https://www.youtube.com/playlist?list=PL4fGSI1pDJn6jXS_OtUyaL12Q14O2L18R';
@@ -40,42 +41,22 @@ function formatDurationSeconds(sec: number): string {
 
 export const PlayerScreen: React.FC = () => {
   const {
+    queue,
+    currentIndex,
+    currentTrack,
     playbackState,
-    setPlaybackState,
     positionMs,
-    setPositionMs,
     durationMs,
+    failedTrackIds,
+    isResolving,
+    errorMessage,
+    setPositionMs,
     setDurationMs,
-  } = useAppStore();
+  } = usePlayerStore();
 
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [playlistInputUrl, setPlaylistInputUrl] = useState<string>(SAMPLE_PLAYLIST_URL);
   const [isFetchingPlaylist, setIsFetchingPlaylist] = useState<boolean>(false);
-  const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrack[]>([]);
-  const [selectedTrack, setSelectedTrack] = useState<PlaylistTrack | null>(null);
-  const [loadingTrackId, setLoadingTrackId] = useState<string | null>(null);
-
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    const stateSub = AudioPlayerService.onPlaybackStateChanged((state) => {
-      setPlaybackState(state);
-      if (state === 'playing') {
-        AudioPlayerService.getDuration().then(setDurationMs);
-      }
-    });
-
-    const errorSub = AudioPlayerService.onPlaybackError((err) => {
-      setErrorMessage(err);
-      setPlaybackState('idle');
-      setLoadingTrackId(null);
-    });
-
-    return () => {
-      stateSub.remove();
-      errorSub.remove();
-    };
-  }, [setPlaybackState, setDurationMs]);
 
   useEffect(() => {
     if (playbackState === 'playing') {
@@ -103,94 +84,85 @@ export const PlayerScreen: React.FC = () => {
   }, [playbackState, setPositionMs, setDurationMs]);
 
   const handleFetchPlaylist = async () => {
-    setErrorMessage(null);
     setIsFetchingPlaylist(true);
+    usePlayerStore.getState().setErrorMessage(null);
 
     try {
       const tracks = await YouTubeExtractorService.getPlaylistTracks(playlistInputUrl);
       setIsFetchingPlaylist(false);
-      setPlaylistTracks(tracks);
-      console.log(`[PlayerScreen] Fetched ${tracks.length} tracks:`, tracks);
+      console.log(`[PlayerScreen] Fetched ${tracks.length} tracks. Loading queue...`);
+      await PlaybackController.loadQueue(tracks, 0);
     } catch (err: any) {
       setIsFetchingPlaylist(false);
       const errMsg = err?.message || 'Failed to fetch playlist tracks';
-      setErrorMessage(errMsg);
+      usePlayerStore.getState().setErrorMessage(errMsg);
     }
   };
 
-  const handlePlayTrack = async (track: PlaylistTrack) => {
-    setErrorMessage(null);
-    setSelectedTrack(track);
-    setLoadingTrackId(track.id);
-
-    try {
-      const streamUrl = await YouTubeExtractorService.resolveStreamUrl(track.id);
-      setLoadingTrackId(null);
-      AudioPlayerService.play(streamUrl);
-    } catch (err: any) {
-      setLoadingTrackId(null);
-      const errMsg = err?.message || `Failed to resolve stream for ${track.title}`;
-      setErrorMessage(errMsg);
-    }
-  };
-
-  const handlePlaySoundHelix = () => {
-    setErrorMessage(null);
-    setSelectedTrack({
-      id: 'soundhelix-1',
-      title: 'SoundHelix Song 1',
-      artist: 'SoundHelix Direct MP3',
+  const handlePlayDirectMp3 = () => {
+    const directTrack: PlaylistTrack = {
+      id: SAMPLE_AUDIO_URL,
+      title: 'SoundHelix Song 1 (Direct MP3)',
+      artist: 'SoundHelix Demo Stream',
       thumbnailUrl: '',
       duration: 372,
-    });
-    AudioPlayerService.play(SAMPLE_AUDIO_URL);
+    };
+    PlaybackController.loadQueue([directTrack], 0);
   };
 
   const handlePlayPause = () => {
-    setErrorMessage(null);
     if (playbackState === 'playing') {
-      AudioPlayerService.pause();
+      PlaybackController.pause();
     } else if (playbackState === 'paused') {
-      AudioPlayerService.resume();
+      PlaybackController.resume();
+    } else if (queue.length > 0) {
+      PlaybackController.playTrackAtIndex(currentIndex >= 0 ? currentIndex : 0);
     } else {
-      handlePlaySoundHelix();
+      handlePlayDirectMp3();
     }
   };
 
   const handleStop = () => {
-    AudioPlayerService.stop();
-    setPlaybackState('idle');
-    setPositionMs(0);
+    PlaybackController.stop();
   };
 
-  const handleSeekForward = async () => {
-    const current = await AudioPlayerService.getCurrentPosition();
-    AudioPlayerService.seekTo(current + 10000);
+  const handleSeekForward = () => {
+    PlaybackController.seekTo(positionMs + 10000);
   };
 
-  const handleSeekBackward = async () => {
-    const current = await AudioPlayerService.getCurrentPosition();
-    AudioPlayerService.seekTo(Math.max(0, current - 10000));
+  const handleSeekBackward = () => {
+    PlaybackController.seekTo(Math.max(0, positionMs - 10000));
   };
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <Header title="Now Playing" subtitle="Sonance Audio Player" />
+        <Header title="Now Playing" subtitle="Sonance Audio Engine & Queue" />
 
-        {/* Top Player Card */}
+        {/* Now Playing Card */}
         <View style={styles.nowPlayingCard}>
-          <Text style={styles.trackTitle}>
-            {selectedTrack ? selectedTrack.title : 'No Track Playing'}
+          <Text style={styles.trackTitle} numberOfLines={1}>
+            {currentTrack ? currentTrack.title : 'No Track Playing'}
           </Text>
-          <Text style={styles.artistName}>
-            {selectedTrack ? selectedTrack.artist : 'Select a track below'}
+          <Text style={styles.artistName} numberOfLines={1}>
+            {currentTrack
+              ? `${currentTrack.artist} • Track ${currentIndex + 1} of ${queue.length}`
+              : 'Fetch a playlist or select a track below'}
           </Text>
 
-          <View style={styles.stateBadge}>
-            <Text style={styles.stateBadgeText}>
-              STATUS: {playbackState.toUpperCase()}
-            </Text>
+          <View style={styles.badgeRow}>
+            <View style={styles.stateBadge}>
+              <Text style={styles.stateBadgeText}>
+                STATUS: {playbackState.toUpperCase()}
+              </Text>
+            </View>
+
+            {isResolving && (
+              <View style={[styles.stateBadge, styles.resolvingBadge]}>
+                <ActivityIndicator size="small" color={theme.colors.background} style={{ marginRight: 4 }} />
+                <Text style={styles.resolvingBadgeText}>RESOLVING STREAM...</Text>
+              </View>
+            )}
           </View>
 
           {/* Progress Bar */}
@@ -216,14 +188,19 @@ export const PlayerScreen: React.FC = () => {
 
           {/* Playback Controls */}
           <View style={styles.controlsRow}>
+            <TouchableOpacity onPress={() => PlaybackController.playPrevious()} style={styles.iconButton}>
+              <Ionicons name="play-skip-back" size={24} color={theme.colors.textPrimary} />
+            </TouchableOpacity>
+
             <TouchableOpacity onPress={handleSeekBackward} style={styles.iconButton}>
-              <Ionicons name="play-back" size={24} color={theme.colors.textPrimary} />
+              <Ionicons name="play-back" size={22} color={theme.colors.textPrimary} />
             </TouchableOpacity>
 
             <TouchableOpacity
               onPress={handlePlayPause}
               style={styles.playButton}
               activeOpacity={0.8}
+              disabled={isResolving}
             >
               <Ionicons
                 name={
@@ -239,11 +216,15 @@ export const PlayerScreen: React.FC = () => {
             </TouchableOpacity>
 
             <TouchableOpacity onPress={handleStop} style={styles.iconButton}>
-              <Ionicons name="square" size={22} color={theme.colors.textPrimary} />
+              <Ionicons name="square" size={20} color={theme.colors.textPrimary} />
             </TouchableOpacity>
 
             <TouchableOpacity onPress={handleSeekForward} style={styles.iconButton}>
-              <Ionicons name="play-forward" size={24} color={theme.colors.textPrimary} />
+              <Ionicons name="play-forward" size={22} color={theme.colors.textPrimary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => PlaybackController.playNext()} style={styles.iconButton}>
+              <Ionicons name="play-skip-forward" size={24} color={theme.colors.textPrimary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -257,7 +238,7 @@ export const PlayerScreen: React.FC = () => {
 
         {/* Playlist Input Section */}
         <View style={styles.playlistInputSection}>
-          <Text style={styles.sectionTitle}>YouTube Playlist Extractor</Text>
+          <Text style={styles.sectionTitle}>Queue & Playlist Loader</Text>
           <View style={styles.inputRow}>
             <TextInput
               style={styles.urlInput}
@@ -276,58 +257,78 @@ export const PlayerScreen: React.FC = () => {
               {isFetchingPlaylist ? (
                 <ActivityIndicator color={theme.colors.background} size="small" />
               ) : (
-                <Text style={styles.fetchButtonText}>Fetch</Text>
+                <Text style={styles.fetchButtonText}>Load Queue</Text>
               )}
             </TouchableOpacity>
           </View>
 
           <TouchableOpacity
             style={styles.fallbackButton}
-            onPress={handlePlaySoundHelix}
+            onPress={handlePlayDirectMp3}
           >
-            <Text style={styles.fallbackButtonText}>Play Fallback MP3 Stream</Text>
+            <Text style={styles.fallbackButtonText}>Play Fallback Direct MP3 Stream</Text>
           </TouchableOpacity>
         </View>
 
         {/* Playlist Track List */}
         <View style={styles.listContainer}>
           <Text style={styles.listHeader}>
-            Playlist Tracks ({playlistTracks.length})
+            Active Queue ({queue.length} tracks)
           </Text>
           <FlatList
-            data={playlistTracks}
+            data={queue}
             keyExtractor={(item, index) => `${item.id}-${index}`}
             contentContainerStyle={styles.listContent}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.trackCard}
-                onPress={() => handlePlayTrack(item)}
-                activeOpacity={0.7}
-              >
-                {item.thumbnailUrl ? (
-                  <Image source={{ uri: item.thumbnailUrl }} style={styles.trackThumbnail} />
-                ) : (
-                  <View style={[styles.trackThumbnail, styles.thumbnailPlaceholder]}>
-                    <Ionicons name="musical-note" size={20} color={theme.colors.primary} />
+            renderItem={({ item, index }) => {
+              const isCurrent = index === currentIndex;
+              const isFailed = !!failedTrackIds[item.id];
+
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.trackCard,
+                    isCurrent && styles.trackCardActive,
+                    isFailed && styles.trackCardFailed,
+                  ]}
+                  onPress={() => PlaybackController.playTrackAtIndex(index)}
+                  activeOpacity={0.7}
+                >
+                  {item.thumbnailUrl ? (
+                    <Image source={{ uri: item.thumbnailUrl }} style={styles.trackThumbnail} />
+                  ) : (
+                    <View style={[styles.trackThumbnail, styles.thumbnailPlaceholder]}>
+                      <Ionicons name="musical-note" size={20} color={theme.colors.primary} />
+                    </View>
+                  )}
+
+                  <View style={styles.trackInfo}>
+                    <Text
+                      style={[styles.trackCardTitle, isCurrent && styles.trackCardTitleActive]}
+                      numberOfLines={1}
+                    >
+                      {item.title}
+                    </Text>
+                    <Text style={styles.trackCardArtist} numberOfLines={1}>
+                      {item.artist} • {formatDurationSeconds(item.duration)}
+                    </Text>
                   </View>
-                )}
 
-                <View style={styles.trackInfo}>
-                  <Text style={styles.trackCardTitle} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                  <Text style={styles.trackCardArtist} numberOfLines={1}>
-                    {item.artist} • {formatDurationSeconds(item.duration)}
-                  </Text>
-                </View>
-
-                {loadingTrackId === item.id ? (
-                  <ActivityIndicator color={theme.colors.primary} size="small" />
-                ) : (
-                  <Ionicons name="play-circle-outline" size={26} color={theme.colors.primary} />
-                )}
-              </TouchableOpacity>
-            )}
+                  {isCurrent && isResolving ? (
+                    <ActivityIndicator color={theme.colors.primary} size="small" />
+                  ) : isFailed ? (
+                    <Ionicons name="close-circle" size={22} color="#FF4D4D" />
+                  ) : isCurrent ? (
+                    <Ionicons
+                      name={playbackState === 'playing' ? 'volume-high' : 'pause-circle'}
+                      size={24}
+                      color={theme.colors.primary}
+                    />
+                  ) : (
+                    <Ionicons name="play-circle-outline" size={24} color={theme.colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+              );
+            }}
           />
         </View>
       </View>
@@ -355,7 +356,7 @@ const styles = StyleSheet.create({
   },
   trackTitle: {
     color: theme.colors.textPrimary,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
     textAlign: 'center',
     marginBottom: 2,
@@ -365,18 +366,32 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: theme.spacing.xs,
   },
+  badgeRow: {
+    flexDirection: 'row',
+    gap: theme.spacing.xs,
+    marginBottom: theme.spacing.xs,
+  },
   stateBadge: {
     backgroundColor: theme.colors.surfaceHighlight,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 2,
-    borderRadius: 10,
-    marginBottom: theme.spacing.xs,
+    borderRadius: 8,
   },
   stateBadgeText: {
     color: theme.colors.primary,
     fontSize: 10,
     fontWeight: 'bold',
     letterSpacing: 1,
+  },
+  resolvingBadge: {
+    backgroundColor: theme.colors.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  resolvingBadgeText: {
+    color: theme.colors.background,
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   progressContainer: {
     width: '100%',
@@ -405,7 +420,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    width: '80%',
+    width: '100%',
     marginTop: theme.spacing.xs,
   },
   iconButton: {
@@ -434,7 +449,7 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   playlistInputSection: {
-    marginTop: theme.spacing.sm,
+    marginTop: theme.spacing.xs,
     backgroundColor: theme.colors.surface,
     padding: theme.spacing.sm,
     borderRadius: 10,
@@ -485,11 +500,11 @@ const styles = StyleSheet.create({
   },
   listContainer: {
     flex: 1,
-    marginTop: theme.spacing.sm,
+    marginTop: theme.spacing.xs,
   },
   listHeader: {
     color: theme.colors.textPrimary,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 'bold',
     marginBottom: theme.spacing.xs,
   },
@@ -506,9 +521,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
+  trackCardActive: {
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.surfaceHighlight,
+  },
+  trackCardFailed: {
+    borderColor: '#FF4D4D',
+    opacity: 0.6,
+  },
   trackThumbnail: {
-    width: 40,
-    height: 40,
+    width: 38,
+    height: 38,
     borderRadius: 6,
   },
   thumbnailPlaceholder: {
@@ -525,6 +548,10 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
     fontSize: 12,
     fontWeight: '600',
+  },
+  trackCardTitleActive: {
+    color: theme.colors.primary,
+    fontWeight: 'bold',
   },
   trackCardArtist: {
     color: theme.colors.textSecondary,
