@@ -1,11 +1,17 @@
-import { NativeModules, NativeEventEmitter, EmitterSubscription } from 'react-native';
+import { NativeModules, NativeEventEmitter } from 'react-native';
 
 const { AudioPlayerModule } = NativeModules;
 
 export type PlaybackState = 'idle' | 'playing' | 'paused' | 'buffering' | 'ended';
 
+export interface TrackMetadata {
+  title?: string;
+  artist?: string;
+  thumbnailUrl?: string;
+}
+
 export interface AudioPlayerNativeInterface {
-  play(url: string): void;
+  play(url: string, metadata?: TrackMetadata): void;
   pause(): void;
   resume(): void;
   stop(): void;

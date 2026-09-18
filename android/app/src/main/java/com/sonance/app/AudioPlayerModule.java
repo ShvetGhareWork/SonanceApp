@@ -7,12 +7,14 @@ import android.content.ServiceConnection;
 import android.os.IBinder;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
 
@@ -60,7 +62,7 @@ public class AudioPlayerModule extends ReactContextBaseJavaModule implements Aud
         if (getReactApplicationContext().hasActiveReactInstance()) {
             getReactApplicationContext()
                     .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                    .emit(eventName, params);
+                    .emit(eventName, params != null ? params : Arguments.createMap());
         }
     }
 
@@ -78,10 +80,23 @@ public class AudioPlayerModule extends ReactContextBaseJavaModule implements Aud
         sendEvent("onPlaybackError", params);
     }
 
+    @Override
+    public void onSkipToNext() {
+        sendEvent("onSkipToNext", null);
+    }
+
+    @Override
+    public void onSkipToPrevious() {
+        sendEvent("onSkipToPrevious", null);
+    }
+
     @ReactMethod
-    public void play(String url) {
+    public void play(String url, @Nullable ReadableMap metadata) {
         if (isBound && audioService != null) {
-            audioService.playUrl(url);
+            String title = metadata != null && metadata.hasKey("title") ? metadata.getString("title") : "Unknown Title";
+            String artist = metadata != null && metadata.hasKey("artist") ? metadata.getString("artist") : "Unknown Artist";
+            String thumbnailUrl = metadata != null && metadata.hasKey("thumbnailUrl") ? metadata.getString("thumbnailUrl") : "";
+            audioService.playUrl(url, title, artist, thumbnailUrl);
         }
     }
 
