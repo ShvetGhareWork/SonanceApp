@@ -1,12 +1,17 @@
-import { AudioPlayerNative, audioPlayerEmitter, PlaybackState } from '../native/AudioPlayerNative';
+import { AudioPlayerNative, audioPlayerEmitter, PlaybackState, TrackMetadata } from '../native/AudioPlayerNative';
 
 export type PlaybackStateCallback = (state: PlaybackState) => void;
 export type PlaybackErrorCallback = (error: string) => void;
+export type SkipCallback = () => void;
 
 class AudioPlayerServiceWrapper {
-  play(url: string): void {
-    if (AudioPlayerNative) {
-      AudioPlayerNative.play(url);
+  play(url: string, metadata?: TrackMetadata): void {
+    try {
+      if (AudioPlayerNative) {
+        AudioPlayerNative.play(url, metadata);
+      }
+    } catch (e) {
+      console.error('[AudioPlayerService] Error calling native play():', e);
     }
   }
 
@@ -92,6 +97,30 @@ class AudioPlayerServiceWrapper {
       });
     } catch (e) {
       console.error('[AudioPlayerService] Error adding listener onPlaybackError:', e);
+      return { remove: () => {} };
+    }
+  }
+
+  onSkipToNext(callback: SkipCallback) {
+    if (!audioPlayerEmitter) return { remove: () => {} };
+    try {
+      return audioPlayerEmitter.addListener('onSkipToNext', () => {
+        callback();
+      });
+    } catch (e) {
+      console.error('[AudioPlayerService] Error adding listener onSkipToNext:', e);
+      return { remove: () => {} };
+    }
+  }
+
+  onSkipToPrevious(callback: SkipCallback) {
+    if (!audioPlayerEmitter) return { remove: () => {} };
+    try {
+      return audioPlayerEmitter.addListener('onSkipToPrevious', () => {
+        callback();
+      });
+    } catch (e) {
+      console.error('[AudioPlayerService] Error adding listener onSkipToPrevious:', e);
       return { remove: () => {} };
     }
   }
