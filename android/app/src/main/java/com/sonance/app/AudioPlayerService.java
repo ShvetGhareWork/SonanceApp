@@ -1,44 +1,39 @@
 package com.sonance.app;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Intent;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.net.Uri;
 import android.os.Binder;
+import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 
 import androidx.annotation.Nullable;
+import androidx.core.app.NotificationCompat;
 import androidx.media3.common.MediaItem;
-import androidx.media3.common.MediaMetadata;
 import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.session.MediaSession;
 import androidx.media3.session.MediaSessionService;
-import androidx.media3.session.SessionResult;
-
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class AudioPlayerService extends MediaSessionService {
+
+    private static final String CHANNEL_ID = "sonance_playback_channel";
+    private static final int NOTIFICATION_ID = 1001;
 
     private ExoPlayer player;
     private MediaSession mediaSession;
     private final IBinder binder = new LocalBinder();
     private PlaybackListener playbackListener;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private final ExecutorService imageExecutor = Executors.newSingleThreadExecutor();
 
     public interface PlaybackListener {
         void onPlaybackStateChanged(String state);
         void onError(String errorMessage);
-        void onSkipToNext();
-        void onSkipToPrevious();
     }
 
     public interface PromiseCallback<T> {
@@ -55,36 +50,9 @@ public class AudioPlayerService extends MediaSessionService {
     public void onCreate() {
         super.onCreate();
         player = new ExoPlayer.Builder(this).build();
+        mediaSession = new MediaSession.Builder(this, player).build();
 
-        MediaSession.Callback sessionCallback = new MediaSession.Callback() {
-            @Override
-            public int onPlayerCommandRequest(
-                    MediaSession session,
-                    MediaSession.ControllerInfo controller,
-                    int playerCommand) {
-                if (playerCommand == Player.COMMAND_SEEK_TO_NEXT || playerCommand == Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM) {
-                    mainHandler.post(() -> {
-                        if (playbackListener != null) {
-                            playbackListener.onSkipToNext();
-                        }
-                    });
-                    return SessionResult.RESULT_SUCCESS;
-                }
-                if (playerCommand == Player.COMMAND_SEEK_TO_PREVIOUS || playerCommand == Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM) {
-                    mainHandler.post(() -> {
-                        if (playbackListener != null) {
-                            playbackListener.onSkipToPrevious();
-                        }
-                    });
-                    return SessionResult.RESULT_SUCCESS;
-                }
-                return SessionResult.RESULT_SUCCESS;
-            }
-        };
-
-        mediaSession = new MediaSession.Builder(this, player)
-                .setCallback(sessionCallback)
-                .build();
+        createNotificationChannel();
 
         player.addListener(new Player.Listener() {
             @Override
@@ -99,6 +67,7 @@ public class AudioPlayerService extends MediaSessionService {
                         break;
                     case Player.STATE_ENDED:
                         stateStr = "ended";
+                        stopForegroundService();
                         break;
                     case Player.STATE_IDLE:
                     default:
@@ -115,6 +84,9 @@ public class AudioPlayerService extends MediaSessionService {
                 if (playbackListener != null) {
                     playbackListener.onPlaybackStateChanged(isPlaying ? "playing" : "paused");
                 }
+                if (isPlaying) {
+                    startForegroundServiceWithNotification();
+                }
             }
 
             @Override
@@ -130,70 +102,16 @@ public class AudioPlayerService extends MediaSessionService {
         this.playbackListener = listener;
     }
 
-    public void playUrl(final String url, final String title, final String artist, final String thumbnailUrl) {
+    public void playUrl(final String url) {
         mainHandler.post(() -> {
             if (player != null) {
-                MediaMetadata.Builder metadataBuilder = new MediaMetadata.Builder();
-                if (title != null) metadataBuilder.setTitle(title);
-                if (artist != null) metadataBuilder.setArtist(artist);
-                if (thumbnailUrl != null && !thumbnailUrl.isEmpty()) {
-                    metadataBuilder.setArtworkUri(Uri.parse(thumbnailUrl));
-                }
-
-                MediaMetadata metadata = metadataBuilder.build();
-
-                MediaItem mediaItem = new MediaItem.Builder()
-                        .setMediaId(url)
-                        .setUri(url)
-                        .setMediaMetadata(metadata)
-                        .build();
-
+                MediaItem mediaItem = MediaItem.fromUri(url);
                 player.setMediaItem(mediaItem);
                 player.prepare();
                 player.play();
-
-                if (thumbnailUrl != null && !thumbnailUrl.isEmpty() && (thumbnailUrl.startsWith("http://") || thumbnailUrl.startsWith("https://"))) {
-                    loadArtworkAsync(thumbnailUrl, metadataBuilder, mediaItem);
-                }
+                startForegroundServiceWithNotification();
             }
         });
-    }
-
-    private void loadArtworkAsync(String thumbnailUrl, MediaMetadata.Builder metadataBuilder, MediaItem currentMediaItem) {
-        imageExecutor.execute(() -> {
-            try {
-                URL url = new URL(thumbnailUrl);
-                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-                connection.setDoInput(true);
-                connection.connect();
-                InputStream input = connection.getInputStream();
-                Bitmap bitmap = BitmapFactory.decodeStream(input);
-                if (bitmap != null) {
-                    mainHandler.post(() -> {
-                        if (player != null) {
-                            MediaItem activeItem = player.getCurrentMediaItem();
-                            if (activeItem != null && activeItem.mediaId.equals(currentMediaItem.mediaId)) {
-                                MediaMetadata updatedMetadata = metadataBuilder
-                                        .setArtworkData(bitmapToByteArray(bitmap), MediaMetadata.PICTURE_TYPE_FRONT_COVER)
-                                        .build();
-                                MediaItem updatedItem = currentMediaItem.buildUpon()
-                                        .setMediaMetadata(updatedMetadata)
-                                        .build();
-                                player.replaceMediaItem(player.getCurrentMediaItemIndex(), updatedItem);
-                            }
-                        }
-                    });
-                }
-            } catch (Exception e) {
-                // Artwork fallback to uri
-            }
-        });
-    }
-
-    private byte[] bitmapToByteArray(Bitmap bitmap) {
-        java.io.ByteArrayOutputStream stream = new java.io.ByteArrayOutputStream();
-        bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream);
-        return stream.toByteArray();
     }
 
     public void pause() {
@@ -208,6 +126,7 @@ public class AudioPlayerService extends MediaSessionService {
         mainHandler.post(() -> {
             if (player != null) {
                 player.play();
+                startForegroundServiceWithNotification();
             }
         });
     }
@@ -217,6 +136,7 @@ public class AudioPlayerService extends MediaSessionService {
             if (player != null) {
                 player.stop();
             }
+            stopForegroundService();
         });
     }
 
@@ -242,6 +162,43 @@ public class AudioPlayerService extends MediaSessionService {
         });
     }
 
+    private void startForegroundServiceWithNotification() {
+        Intent notificationIntent = new Intent(this, MainActivity.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, 0, notificationIntent,
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
+        );
+
+        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Sonance Audio Player")
+                .setContentText("Playing audio stream...")
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .build();
+
+        startForeground(NOTIFICATION_ID, notification);
+    }
+
+    private void stopForegroundService() {
+        stopForeground(true);
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Sonance Playback Channel",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            channel.setDescription("Background audio playback for Sonance");
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(channel);
+            }
+        }
+    }
+
     @Nullable
     @Override
     public MediaSession onGetSession(MediaSession.ControllerInfo controllerInfo) {
@@ -265,7 +222,6 @@ public class AudioPlayerService extends MediaSessionService {
             mediaSession.release();
             mediaSession = null;
         }
-        imageExecutor.shutdown();
         super.onDestroy();
     }
 }
