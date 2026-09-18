@@ -1,13 +1,12 @@
-import { AudioPlayerNative, audioPlayerEmitter, PlaybackState, TrackMetadata } from '../native/AudioPlayerNative';
+import { AudioPlayerNative, audioPlayerEmitter, PlaybackState } from '../native/AudioPlayerNative';
 
 export type PlaybackStateCallback = (state: PlaybackState) => void;
 export type PlaybackErrorCallback = (error: string) => void;
-export type SkipCallback = () => void;
 
 class AudioPlayerServiceWrapper {
-  play(url: string, metadata?: TrackMetadata): void {
+  play(url: string): void {
     if (AudioPlayerNative) {
-      AudioPlayerNative.play(url, metadata);
+      AudioPlayerNative.play(url);
     }
   }
 
@@ -60,20 +59,6 @@ class AudioPlayerServiceWrapper {
     if (!audioPlayerEmitter) return { remove: () => {} };
     return audioPlayerEmitter.addListener('onPlaybackError', (event: { error: string }) => {
       callback(event.error);
-    });
-  }
-
-  onSkipToNext(callback: SkipCallback) {
-    if (!audioPlayerEmitter) return { remove: () => {} };
-    return audioPlayerEmitter.addListener('onSkipToNext', () => {
-      callback();
-    });
-  }
-
-  onSkipToPrevious(callback: SkipCallback) {
-    if (!audioPlayerEmitter) return { remove: () => {} };
-    return audioPlayerEmitter.addListener('onSkipToPrevious', () => {
-      callback();
     });
   }
 }

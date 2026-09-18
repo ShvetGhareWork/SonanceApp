@@ -50,10 +50,6 @@ export const PlayerScreen: React.FC = () => {
     failedTrackIds,
     isResolving,
     errorMessage,
-    shuffleMode,
-    repeatMode,
-    toggleShuffle,
-    toggleRepeat,
     setPositionMs,
     setDurationMs,
   } = usePlayerStore();
@@ -188,31 +184,6 @@ export const PlayerScreen: React.FC = () => {
               <Text style={styles.timeText}>{formatTime(positionMs)}</Text>
               <Text style={styles.timeText}>{formatTime(durationMs)}</Text>
             </View>
-          </View>
-
-          {/* Mode Controls Row (Shuffle & Repeat) */}
-          <View style={styles.modeRow}>
-            <TouchableOpacity onPress={toggleShuffle} style={[styles.modeButton, shuffleMode && styles.modeButtonActive]}>
-              <Ionicons
-                name="shuffle"
-                size={18}
-                color={shuffleMode ? theme.colors.primary : theme.colors.textSecondary}
-              />
-              <Text style={[styles.modeText, shuffleMode && styles.modeTextActive]}>
-                SHUFFLE {shuffleMode ? 'ON' : 'OFF'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={toggleRepeat} style={[styles.modeButton, repeatMode !== 'off' && styles.modeButtonActive]}>
-              <Ionicons
-                name={repeatMode === 'repeat-one' ? 'repeat' : 'repeat-outline'}
-                size={18}
-                color={repeatMode !== 'off' ? theme.colors.primary : theme.colors.textSecondary}
-              />
-              <Text style={[styles.modeText, repeatMode !== 'off' && styles.modeTextActive]}>
-                REPEAT: {repeatMode.toUpperCase()}
-              </Text>
-            </TouchableOpacity>
           </View>
 
           {/* Playback Controls */}
@@ -444,33 +415,6 @@ const styles = StyleSheet.create({
   timeText: {
     color: theme.colors.textSecondary,
     fontSize: 10,
-  },
-  modeRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: theme.spacing.md,
-    marginVertical: theme.spacing.xs,
-  },
-  modeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surfaceHighlight,
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
-  },
-  modeButtonActive: {
-    borderColor: theme.colors.primary,
-    borderWidth: 1,
-  },
-  modeText: {
-    color: theme.colors.textSecondary,
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  modeTextActive: {
-    color: theme.colors.primary,
   },
   controlsRow: {
     flexDirection: 'row',
