@@ -27,8 +27,8 @@ class PlaybackControllerClass {
       }
 
       if (state === 'ended') {
-        console.log('[PlaybackController] Track ended naturally. Handling end-of-track advancement...');
-        this.handleTrackEnded();
+        console.log('[PlaybackController] Track ended naturally. Advancing to next track...');
+        this.playNext();
       }
     });
 
@@ -42,44 +42,6 @@ class PlaybackControllerClass {
       console.log('[PlaybackController] Automatically skipping failed track...');
       this.playNext();
     });
-
-    AudioPlayerService.onSkipToNext(() => {
-      console.log('[PlaybackController] System skip to next triggered');
-      this.playNext();
-    });
-
-    AudioPlayerService.onSkipToPrevious(() => {
-      console.log('[PlaybackController] System skip to previous triggered');
-      this.playPrevious();
-    });
-  }
-
-  private async handleTrackEnded(): Promise<void> {
-    const { repeatMode, currentIndex, queue } = usePlayerStore.getState();
-
-    if (repeatMode === 'repeat-one') {
-      console.log('[PlaybackController] repeat-one is ON. Replaying current track...');
-      if (currentIndex >= 0 && currentIndex < queue.length) {
-        await this.playTrackAtIndex(currentIndex);
-      } else {
-        AudioPlayerService.seekTo(0);
-        AudioPlayerService.resume();
-      }
-      return;
-    }
-
-    if (currentIndex + 1 < queue.length) {
-      await this.playTrackAtIndex(currentIndex + 1);
-    } else {
-      if (repeatMode === 'repeat-all' && queue.length > 0) {
-        console.log('[PlaybackController] repeat-all is ON and end of queue reached. Looping back to first track...');
-        await this.playTrackAtIndex(0);
-      } else {
-        console.log('[PlaybackController] End of queue reached. Stopping playback.');
-        AudioPlayerService.stop();
-        usePlayerStore.getState().setPlaybackState('idle');
-      }
-    }
   }
 
   async loadQueue(tracks: PlaylistTrack[], startIndex = 0): Promise<void> {
@@ -90,8 +52,7 @@ class PlaybackControllerClass {
     }
 
     usePlayerStore.getState().setQueue(tracks, startIndex);
-    const activeIndex = usePlayerStore.getState().currentIndex;
-    await this.playTrackAtIndex(activeIndex >= 0 ? activeIndex : 0);
+    await this.playTrackAtIndex(startIndex);
   }
 
   async playTrackAtIndex(index: number): Promise<void> {
@@ -153,11 +114,7 @@ class PlaybackControllerClass {
 
       store.setIsResolving(false);
       console.log(`[PlaybackController] Playing resolved stream for: ${track.title}`);
-      AudioPlayerService.play(streamUrl, {
-        title: track.title,
-        artist: track.artist,
-        thumbnailUrl: track.thumbnailUrl,
-      });
+      AudioPlayerService.play(streamUrl);
     } catch (err: any) {
       store.setIsResolving(false);
       const rawErrorMsg = err?.message || 'Extraction failed';
@@ -174,21 +131,18 @@ class PlaybackControllerClass {
   }
 
   async playNext(): Promise<void> {
-    const { currentIndex, queue, repeatMode } = usePlayerStore.getState();
+    const { currentIndex, queue } = usePlayerStore.getState();
     if (currentIndex + 1 < queue.length) {
       await this.playTrackAtIndex(currentIndex + 1);
-    } else if (repeatMode === 'repeat-all' && queue.length > 0) {
-      console.log('[PlaybackController] User pressed next at end of queue with repeat-all ON. Looping to track 0...');
-      await this.playTrackAtIndex(0);
     } else {
-      console.log('[PlaybackController] End of queue reached on playNext. Stopping playback.');
+      console.log('[PlaybackController] End of queue reached. Stopping playback.');
       AudioPlayerService.stop();
       usePlayerStore.getState().setPlaybackState('idle');
     }
   }
 
   async playPrevious(): Promise<void> {
-    const { currentIndex, positionMs, queue, repeatMode } = usePlayerStore.getState();
+    const { currentIndex, positionMs } = usePlayerStore.getState();
 
     // If more than 3 seconds into track, restart current track
     if (positionMs > 3000) {
@@ -199,9 +153,6 @@ class PlaybackControllerClass {
 
     if (currentIndex - 1 >= 0) {
       await this.playTrackAtIndex(currentIndex - 1);
-    } else if (repeatMode === 'repeat-all' && queue.length > 0) {
-      console.log('[PlaybackController] User pressed previous at start of queue with repeat-all ON. Wrapping to last track...');
-      await this.playTrackAtIndex(queue.length - 1);
     } else {
       AudioPlayerService.seekTo(0);
     }
