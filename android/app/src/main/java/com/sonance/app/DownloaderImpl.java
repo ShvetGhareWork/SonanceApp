@@ -20,6 +20,7 @@ public class DownloaderImpl extends Downloader {
 
     private static DownloaderImpl instance;
     private final OkHttpClient client;
+    private static final String DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
 
     private DownloaderImpl(OkHttpClient.Builder builder) {
         this.client = builder
@@ -52,13 +53,21 @@ public class DownloaderImpl extends Downloader {
         okhttp3.Request.Builder requestBuilder = new okhttp3.Request.Builder()
                 .url(url);
 
+        boolean hasUserAgent = false;
         if (headers != null) {
             for (Map.Entry<String, List<String>> header : headers.entrySet()) {
                 String headerName = header.getKey();
+                if ("User-Agent".equalsIgnoreCase(headerName)) {
+                    hasUserAgent = true;
+                }
                 for (String headerValue : header.getValue()) {
                     requestBuilder.addHeader(headerName, headerValue);
                 }
             }
+        }
+
+        if (!hasUserAgent) {
+            requestBuilder.addHeader("User-Agent", DEFAULT_USER_AGENT);
         }
 
         RequestBody requestBody = null;
