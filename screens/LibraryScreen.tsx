@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useCallback, memo } from 'react';
 import { View, Text, StyleSheet, FlatList, SafeAreaView, TouchableOpacity, Image } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { theme } from '../constants/theme';
@@ -6,12 +6,50 @@ import { Header } from '../components/Header';
 import { usePlayerStore } from '../store/playerStore';
 import { PlaybackController } from '../services/PlaybackController';
 import { PlaylistTrack } from '../services/YouTubeExtractorService';
+import { DownloadedTrackRecord } from '../services/PlaylistStorageService';
 
 function formatSize(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 MB';
   const mb = bytes / (1024 * 1024);
   return `${mb.toFixed(1)} MB`;
 }
+
+interface LibraryTrackCardProps {
+  item: DownloadedTrackRecord;
+  onPlay: (item: DownloadedTrackRecord) => void;
+  onDelete: (trackId: string) => void;
+}
+
+const LibraryTrackCard = memo<LibraryTrackCardProps>(({ item, onPlay, onDelete }) => {
+  return (
+    <TouchableOpacity style={styles.card} onPress={() => onPlay(item)} activeOpacity={0.7}>
+      {item.thumbnailUrl ? (
+        <Image source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} />
+      ) : (
+        <View style={[styles.thumbnail, styles.thumbnailPlaceholder]}>
+          <Ionicons name="musical-note" size={20} color={theme.colors.primary} />
+        </View>
+      )}
+
+      <View style={styles.cardContent}>
+        <Text style={styles.cardTitle} numberOfLines={1}>
+          {item.title}
+        </Text>
+        <Text style={styles.cardSubtitle} numberOfLines={1}>
+          {item.artist} • {formatSize(item.fileSize)}
+        </Text>
+      </View>
+
+      <TouchableOpacity
+        onPress={() => onDelete(item.id)}
+        style={styles.deleteButton}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      >
+        <Ionicons name="trash-outline" size={20} color="#FF4D4D" />
+      </TouchableOpacity>
+    </TouchableOpacity>
+  );
+});
 
 export const LibraryScreen: React.FC = () => {
   const { downloadedTracks, loadDownloadedTracks, deleteDownloadedTrack } = usePlayerStore();
@@ -22,7 +60,7 @@ export const LibraryScreen: React.FC = () => {
 
   const totalBytes = downloadedTracks.reduce((acc, item) => acc + (item.fileSize || 0), 0);
 
-  const handlePlayDownloadedTrack = async (item: typeof downloadedTracks[0]) => {
+  const handlePlayDownloadedTrack = useCallback(async (item: DownloadedTrackRecord) => {
     const track: PlaylistTrack = {
       id: item.id,
       title: item.title,
@@ -31,7 +69,25 @@ export const LibraryScreen: React.FC = () => {
       duration: item.duration,
     };
     await PlaybackController.loadQueue([track], 0);
-  };
+  }, []);
+
+  const handleDeleteDownloadedTrack = useCallback(
+    async (trackId: string) => {
+      await deleteDownloadedTrack(trackId);
+    },
+    [deleteDownloadedTrack]
+  );
+
+  const renderItem = useCallback(
+    ({ item }: { item: DownloadedTrackRecord }) => (
+      <LibraryTrackCard
+        item={item}
+        onPlay={handlePlayDownloadedTrack}
+        onDelete={handleDeleteDownloadedTrack}
+      />
+    ),
+    [handlePlayDownloadedTrack, handleDeleteDownloadedTrack]
+  );
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -56,6 +112,10 @@ export const LibraryScreen: React.FC = () => {
           data={downloadedTracks}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
+          removeClippedSubviews={true}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="cloud-offline-outline" size={48} color={theme.colors.textSecondary} />
@@ -65,38 +125,7 @@ export const LibraryScreen: React.FC = () => {
               </Text>
             </View>
           }
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() => handlePlayDownloadedTrack(item)}
-              activeOpacity={0.7}
-            >
-              {item.thumbnailUrl ? (
-                <Image source={{ uri: item.thumbnailUrl }} style={styles.thumbnail} />
-              ) : (
-                <View style={[styles.thumbnail, styles.thumbnailPlaceholder]}>
-                  <Ionicons name="musical-note" size={20} color={theme.colors.primary} />
-                </View>
-              )}
-
-              <View style={styles.cardContent}>
-                <Text style={styles.cardTitle} numberOfLines={1}>
-                  {item.title}
-                </Text>
-                <Text style={styles.cardSubtitle} numberOfLines={1}>
-                  {item.artist} • {formatSize(item.fileSize)}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => deleteDownloadedTrack(item.id)}
-                style={styles.deleteButton}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Ionicons name="trash-outline" size={20} color="#FF4D4D" />
-              </TouchableOpacity>
-            </TouchableOpacity>
-          )}
+          renderItem={renderItem}
         />
       </View>
     </SafeAreaView>

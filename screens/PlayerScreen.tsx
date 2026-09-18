@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback, memo } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import {
   PlaylistTrack,
 } from '../services/YouTubeExtractorService';
 import { AudioPlayerService } from '../services/AudioPlayerService';
+import { DownloadProgress } from '../services/DownloadManagerService';
 
 const SAMPLE_AUDIO_URL = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
 const SAMPLE_PLAYLIST_URL = 'https://www.youtube.com/playlist?list=PL4fGSI1pDJn6jXS_OtUyaL12Q14O2L18R';
@@ -38,6 +39,114 @@ function formatDurationSeconds(sec: number): string {
   const seconds = Math.floor(sec % 60);
   return `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
 }
+
+interface TrackCardProps {
+  item: PlaylistTrack;
+  index: number;
+  isCurrent: boolean;
+  isFailed: boolean;
+  isDownloaded: boolean;
+  isResolving: boolean;
+  playbackState: string;
+  dlState?: DownloadProgress;
+  onSelectTrack: (index: number) => void;
+  onDownloadTrack: (track: PlaylistTrack) => void;
+  onDeleteTrack: (trackId: string) => void;
+}
+
+const TrackCard = memo<TrackCardProps>(
+  ({
+    item,
+    index,
+    isCurrent,
+    isFailed,
+    isDownloaded,
+    isResolving,
+    playbackState,
+    dlState,
+    onSelectTrack,
+    onDownloadTrack,
+    onDeleteTrack,
+  }) => {
+    return (
+      <TouchableOpacity
+        style={[
+          styles.trackCard,
+          isCurrent && styles.trackCardActive,
+          isFailed && styles.trackCardFailed,
+        ]}
+        onPress={() => onSelectTrack(index)}
+        activeOpacity={0.7}
+      >
+        {item.thumbnailUrl ? (
+          <Image source={{ uri: item.thumbnailUrl }} style={styles.trackThumbnail} />
+        ) : (
+          <View style={[styles.trackThumbnail, styles.thumbnailPlaceholder]}>
+            <Ionicons name="musical-note" size={20} color={theme.colors.primary} />
+          </View>
+        )}
+
+        <View style={styles.trackInfo}>
+          <Text
+            style={[styles.trackCardTitle, isCurrent && styles.trackCardTitleActive]}
+            numberOfLines={1}
+          >
+            {item.title}
+          </Text>
+          <Text style={styles.trackCardArtist} numberOfLines={1}>
+            {item.artist} • {formatDurationSeconds(item.duration)}
+          </Text>
+        </View>
+
+        {/* Download Action Controls */}
+        <View style={styles.downloadActionContainer}>
+          {isDownloaded ? (
+            <View style={styles.downloadDoneRow}>
+              <Ionicons name="checkmark-circle" size={20} color="#00FF88" style={{ marginRight: 4 }} />
+              <TouchableOpacity
+                onPress={() => onDeleteTrack(item.id)}
+                style={styles.deleteButton}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="trash-outline" size={18} color="#FF4D4D" />
+              </TouchableOpacity>
+            </View>
+          ) : dlState && dlState.status === 'downloading' ? (
+            <View style={styles.downloadingProgressRow}>
+              <ActivityIndicator color={theme.colors.primary} size="small" style={{ marginRight: 4 }} />
+              <Text style={styles.progressText}>{dlState.progress}%</Text>
+            </View>
+          ) : dlState && dlState.status === 'queued' ? (
+            <Ionicons name="time-outline" size={20} color={theme.colors.textSecondary} />
+          ) : (
+            <TouchableOpacity
+              onPress={() => onDownloadTrack(item)}
+              style={styles.downloadButton}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="download-outline" size={20} color={theme.colors.textPrimary} />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {isCurrent && isResolving ? (
+          <ActivityIndicator color={theme.colors.primary} size="small" style={{ marginLeft: 6 }} />
+        ) : isFailed ? (
+          <Ionicons name="close-circle" size={22} color="#FF4D4D" style={{ marginLeft: 6 }} />
+        ) : isCurrent ? (
+          <Ionicons
+            name={playbackState === 'playing' ? 'volume-high' : 'pause-circle'}
+            size={24}
+            color={theme.colors.primary}
+            style={{ marginLeft: 6 }}
+          />
+        ) : (
+          <Ionicons name="play-circle-outline" size={24} color={theme.colors.textSecondary} style={{ marginLeft: 6 }} />
+        )}
+      </TouchableOpacity>
+    );
+  }
+);
 
 export const PlayerScreen: React.FC = () => {
   const {
@@ -146,6 +255,54 @@ export const PlayerScreen: React.FC = () => {
   const handleSeekBackward = () => {
     PlaybackController.seekTo(Math.max(0, positionMs - 10000));
   };
+
+  const handleSelectTrack = useCallback((index: number) => {
+    PlaybackController.playTrackAtIndex(index);
+  }, []);
+
+  const handleDownloadTrack = useCallback((track: PlaylistTrack) => {
+    downloadTrack(track);
+  }, [downloadTrack]);
+
+  const handleDeleteTrack = useCallback((trackId: string) => {
+    deleteDownloadedTrack(trackId);
+  }, [deleteDownloadedTrack]);
+
+  const renderItem = useCallback(
+    ({ item, index }: { item: PlaylistTrack; index: number }) => {
+      const isCurrent = index === currentIndex;
+      const isFailed = !!failedTrackIds[item.id];
+      const isDownloaded = downloadedTracks.some((record) => record.id === item.id);
+      const dlState = downloadsState[item.id];
+
+      return (
+        <TrackCard
+          item={item}
+          index={index}
+          isCurrent={isCurrent}
+          isFailed={isFailed}
+          isDownloaded={isDownloaded}
+          isResolving={isCurrent && isResolving}
+          playbackState={playbackState}
+          dlState={dlState}
+          onSelectTrack={handleSelectTrack}
+          onDownloadTrack={handleDownloadTrack}
+          onDeleteTrack={handleDeleteTrack}
+        />
+      );
+    },
+    [
+      currentIndex,
+      failedTrackIds,
+      downloadedTracks,
+      downloadsState,
+      isResolving,
+      playbackState,
+      handleSelectTrack,
+      handleDownloadTrack,
+      handleDeleteTrack,
+    ]
+  );
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -317,90 +474,11 @@ export const PlayerScreen: React.FC = () => {
             data={queue}
             keyExtractor={(item, index) => `${item.id}-${index}`}
             contentContainerStyle={styles.listContent}
-            renderItem={({ item, index }) => {
-              const isCurrent = index === currentIndex;
-              const isFailed = !!failedTrackIds[item.id];
-              const isDownloaded = downloadedTracks.some((record) => record.id === item.id);
-              const dlState = downloadsState[item.id];
-
-              return (
-                <TouchableOpacity
-                  style={[
-                    styles.trackCard,
-                    isCurrent && styles.trackCardActive,
-                    isFailed && styles.trackCardFailed,
-                  ]}
-                  onPress={() => PlaybackController.playTrackAtIndex(index)}
-                  activeOpacity={0.7}
-                >
-                  {item.thumbnailUrl ? (
-                    <Image source={{ uri: item.thumbnailUrl }} style={styles.trackThumbnail} />
-                  ) : (
-                    <View style={[styles.trackThumbnail, styles.thumbnailPlaceholder]}>
-                      <Ionicons name="musical-note" size={20} color={theme.colors.primary} />
-                    </View>
-                  )}
-
-                  <View style={styles.trackInfo}>
-                    <Text
-                      style={[styles.trackCardTitle, isCurrent && styles.trackCardTitleActive]}
-                      numberOfLines={1}
-                    >
-                      {item.title}
-                    </Text>
-                    <Text style={styles.trackCardArtist} numberOfLines={1}>
-                      {item.artist} • {formatDurationSeconds(item.duration)}
-                    </Text>
-                  </View>
-
-                  {/* Download Action Controls */}
-                  <View style={styles.downloadActionContainer}>
-                    {isDownloaded ? (
-                      <View style={styles.downloadDoneRow}>
-                        <Ionicons name="checkmark-circle" size={20} color="#00FF88" style={{ marginRight: 4 }} />
-                        <TouchableOpacity
-                          onPress={() => deleteDownloadedTrack(item.id)}
-                          style={styles.deleteButton}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <Ionicons name="trash-outline" size={18} color="#FF4D4D" />
-                        </TouchableOpacity>
-                      </View>
-                    ) : dlState && dlState.status === 'downloading' ? (
-                      <View style={styles.downloadingProgressRow}>
-                        <ActivityIndicator color={theme.colors.primary} size="small" style={{ marginRight: 4 }} />
-                        <Text style={styles.progressText}>{dlState.progress}%</Text>
-                      </View>
-                    ) : dlState && dlState.status === 'queued' ? (
-                      <Ionicons name="time-outline" size={20} color={theme.colors.textSecondary} />
-                    ) : (
-                      <TouchableOpacity
-                        onPress={() => downloadTrack(item)}
-                        style={styles.downloadButton}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      >
-                        <Ionicons name="download-outline" size={20} color={theme.colors.textPrimary} />
-                      </TouchableOpacity>
-                    )}
-                  </View>
-
-                  {isCurrent && isResolving ? (
-                    <ActivityIndicator color={theme.colors.primary} size="small" style={{ marginLeft: 6 }} />
-                  ) : isFailed ? (
-                    <Ionicons name="close-circle" size={22} color="#FF4D4D" style={{ marginLeft: 6 }} />
-                  ) : isCurrent ? (
-                    <Ionicons
-                      name={playbackState === 'playing' ? 'volume-high' : 'pause-circle'}
-                      size={24}
-                      color={theme.colors.primary}
-                      style={{ marginLeft: 6 }}
-                    />
-                  ) : (
-                    <Ionicons name="play-circle-outline" size={24} color={theme.colors.textSecondary} style={{ marginLeft: 6 }} />
-                  )}
-                </TouchableOpacity>
-              );
-            }}
+            renderItem={renderItem}
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={5}
+            removeClippedSubviews={true}
           />
         </View>
       </View>
