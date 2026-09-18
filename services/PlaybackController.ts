@@ -1,6 +1,8 @@
+import * as FileSystem from 'expo-file-system/legacy';
 import { usePlayerStore } from '../store/playerStore';
 import { AudioPlayerService } from './AudioPlayerService';
 import { YouTubeExtractorService, PlaylistTrack } from './YouTubeExtractorService';
+import { PlaylistStorageService } from './PlaylistStorageService';
 
 class PlaybackControllerClass {
   private isInitialized = false;
@@ -117,6 +119,30 @@ class PlaybackControllerClass {
     store.setIsResolving(true);
     console.log(`[PlaybackController] Resolving track [${index + 1}/${queue.length}]: ${track.title} (${track.id})`);
 
+    // 1. Check if track is available offline locally
+    try {
+      const localRecord = await PlaylistStorageService.getDownloadedTrack(track.id);
+      if (localRecord && localRecord.localFilePath) {
+        const fileInfo = await FileSystem.getInfoAsync(localRecord.localFilePath);
+        if (fileInfo.exists) {
+          console.log(`[PlaybackController] Playing offline downloaded track for: ${track.title} -> ${localRecord.localFilePath}`);
+          store.setIsResolving(false);
+          AudioPlayerService.play(localRecord.localFilePath, {
+            title: track.title,
+            artist: track.artist,
+            thumbnailUrl: track.thumbnailUrl,
+          });
+          return;
+        } else {
+          console.warn(`[PlaybackController] Local file record found but file missing on disk: ${localRecord.localFilePath}`);
+          await PlaylistStorageService.deleteDownloadedTrack(track.id);
+        }
+      }
+    } catch (e) {
+      console.warn('[PlaybackController] Error checking local file status, falling back to online extraction:', e);
+    }
+
+    // 2. Online stream resolution fallback
     try {
       let streamUrl: string;
       if (track.id.startsWith('http://') || track.id.startsWith('https://')) {
@@ -134,13 +160,15 @@ class PlaybackControllerClass {
       });
     } catch (err: any) {
       store.setIsResolving(false);
-      const errorMsg = err?.message || 'Extraction failed';
-      console.error(`[PlaybackController] Extraction failed for track ${track.title} (${track.id}):`, errorMsg);
+      const rawErrorMsg = err?.message || 'Extraction failed';
+      console.error(`[PlaybackController] Extraction failed for track ${track.title} (${track.id}):`, rawErrorMsg);
       store.markTrackFailed(track.id);
-      store.setErrorMessage(`Failed to load "${track.title}": ${errorMsg}`);
+
+      const offlineError = `Offline, track not available`;
+      store.setErrorMessage(`Failed to play "${track.title}": ${offlineError}`);
 
       // Automatically skip to next track
-      console.log('[PlaybackController] Automatically skipping to next track after extraction error...');
+      console.log('[PlaybackController] Automatically skipping to next track after offline/extraction failure...');
       this.playNext();
     }
   }

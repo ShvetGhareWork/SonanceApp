@@ -52,8 +52,13 @@ export const PlayerScreen: React.FC = () => {
     errorMessage,
     shuffleMode,
     repeatMode,
+    downloadsState,
+    downloadedTracks,
     toggleShuffle,
     toggleRepeat,
+    downloadTrack,
+    deleteDownloadedTrack,
+    loadDownloadedTracks,
     setPositionMs,
     setDurationMs,
   } = usePlayerStore();
@@ -61,6 +66,10 @@ export const PlayerScreen: React.FC = () => {
   const [playlistInputUrl, setPlaylistInputUrl] = useState<string>(SAMPLE_PLAYLIST_URL);
   const [isFetchingPlaylist, setIsFetchingPlaylist] = useState<boolean>(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    loadDownloadedTracks();
+  }, []);
 
   useEffect(() => {
     if (playbackState === 'playing') {
@@ -311,6 +320,8 @@ export const PlayerScreen: React.FC = () => {
             renderItem={({ item, index }) => {
               const isCurrent = index === currentIndex;
               const isFailed = !!failedTrackIds[item.id];
+              const isDownloaded = downloadedTracks.some((record) => record.id === item.id);
+              const dlState = downloadsState[item.id];
 
               return (
                 <TouchableOpacity
@@ -342,18 +353,50 @@ export const PlayerScreen: React.FC = () => {
                     </Text>
                   </View>
 
+                  {/* Download Action Controls */}
+                  <View style={styles.downloadActionContainer}>
+                    {isDownloaded ? (
+                      <View style={styles.downloadDoneRow}>
+                        <Ionicons name="checkmark-circle" size={20} color="#00FF88" style={{ marginRight: 4 }} />
+                        <TouchableOpacity
+                          onPress={() => deleteDownloadedTrack(item.id)}
+                          style={styles.deleteButton}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="trash-outline" size={18} color="#FF4D4D" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : dlState && dlState.status === 'downloading' ? (
+                      <View style={styles.downloadingProgressRow}>
+                        <ActivityIndicator color={theme.colors.primary} size="small" style={{ marginRight: 4 }} />
+                        <Text style={styles.progressText}>{dlState.progress}%</Text>
+                      </View>
+                    ) : dlState && dlState.status === 'queued' ? (
+                      <Ionicons name="time-outline" size={20} color={theme.colors.textSecondary} />
+                    ) : (
+                      <TouchableOpacity
+                        onPress={() => downloadTrack(item)}
+                        style={styles.downloadButton}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="download-outline" size={20} color={theme.colors.textPrimary} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
                   {isCurrent && isResolving ? (
-                    <ActivityIndicator color={theme.colors.primary} size="small" />
+                    <ActivityIndicator color={theme.colors.primary} size="small" style={{ marginLeft: 6 }} />
                   ) : isFailed ? (
-                    <Ionicons name="close-circle" size={22} color="#FF4D4D" />
+                    <Ionicons name="close-circle" size={22} color="#FF4D4D" style={{ marginLeft: 6 }} />
                   ) : isCurrent ? (
                     <Ionicons
                       name={playbackState === 'playing' ? 'volume-high' : 'pause-circle'}
                       size={24}
                       color={theme.colors.primary}
+                      style={{ marginLeft: 6 }}
                     />
                   ) : (
-                    <Ionicons name="play-circle-outline" size={24} color={theme.colors.textSecondary} />
+                    <Ionicons name="play-circle-outline" size={24} color={theme.colors.textSecondary} style={{ marginLeft: 6 }} />
                   )}
                 </TouchableOpacity>
               );
@@ -613,5 +656,27 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     fontSize: 10,
     marginTop: 2,
+  },
+  downloadActionContainer: {
+    marginRight: 4,
+  },
+  downloadDoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  downloadingProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  progressText: {
+    color: theme.colors.primary,
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  downloadButton: {
+    padding: 4,
+  },
+  deleteButton: {
+    padding: 4,
   },
 });
